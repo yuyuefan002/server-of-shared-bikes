@@ -246,8 +246,6 @@ void CSocketAsynServerDlg::OnAccept()
 		delete pSocket;
 }
 IDVECTOR idvector[20];
-char GPSBuf_N[20]= "31.317082";
-char GPSBuf_E[20] = "121.39945";
 
 void CSocketAsynServerDlg::OnReceive()
 {
@@ -256,10 +254,6 @@ void CSocketAsynServerDlg::OnReceive()
 	strcpy(IDBuf, "");
 	char *tempBuf = new char[20];
 	char *test = new char[50];
-	//char *GPSBuf_N = new char[20];
-	//char *GPSBuf_E = new char[20];
-	//strcpy(GPSBuf_N, "31.317082");
-	//strcpy(GPSBuf_E, "121.39945");
 	int nBufLen=1024;
 	int nReceived;
 	int clientpoint=-1;													//用于指明客户信息在第几快内存的指针
@@ -309,33 +303,124 @@ void CSocketAsynServerDlg::OnReceive()
 		}
 		IDBuf[j] = '\0';
 		/***************************************************
-		********物联网车锁模块，车辆定位上传、存储**********
+		***********服务器通用模块，记录用户的连接***********
 		***************************************************/
-		if (pBuf[0] == '$'&&pBuf[1] == 'G'&&pBuf[2] == 'P'&&pBuf[3] == 'R'&&pBuf[4] == 'M'&&pBuf[5] == 'C'&&pBuf[17] == 'A') {
-			int z = 0;
-			int x = 19;
-			while (pBuf[x] != ',')
-			{
-				GPSBuf_N[z++] = pBuf[x];
-				x++;
-			}
-			GPSBuf_N[z] = '\0';
-			x = x + 3;
-			z = 0;
-			while (pBuf[x] != ',')
-			{
-				GPSBuf_E[z++] = pBuf[x];
-				x++;
-			}
-			GPSBuf_E[z] = '\0';
+		if (pBuf[0] == 'I'&&pBuf[1] == 'D'&&pBuf[2] == '@')
+		{
+			strcpy(idvector[id_point].id, IDBuf);
 			donotdisplaypoint = 1;
 		}
 		/***************************************************
-		*******物联网车锁模块，手机用户查询附近车辆*********
+		***********服务器通用模块，离线用户连接*************
 		***************************************************/
-		if (pBuf[0] == 'g'&&pBuf[1] == 'p'&&pBuf[2] == 's'&&pBuf[3] == '$')
+		if (pBuf[0] == 'q'&&pBuf[1] == 'u'&&pBuf[2] == 'i'&&pBuf[3] == 't'&&pBuf[4] == '$')
 		{
 			donotdisplaypoint = 1;
+			for (int i = 0; i < 20; i++) {
+				if (strcmp(IDBuf, idvector[i].id) == 0)
+				{
+					quitpoint = i;								//查找要退出连接的ID所在的地址块
+					break;
+				}
+			}
+			int q = 0;
+			for (pos = m_connectList.GetHeadPosition(); pos != NULL;)
+			{
+				CMySocket *p = (CMySocket*)m_connectList.GetNext(pos);
+				if (q == quitpoint) {
+					//	m_connectList.RemoveAt(pos);
+					p->Close();
+				}
+				q++;
+			}
+			for (int i = 0; i < 20; i++) {
+				if (strcmp(idvector[i].id, IDBuf) == 0) {
+					strcpy(idvector[i].id, "");			//删除ID表中的该ID，私聊就找不到这个人了
+					break;
+				}
+			}
+		}
+
+		/***************************************************
+		********物联网车锁模块，车辆定位上传、存储**********
+		***************************************************/
+		if (pBuf[0] == 'b'&&pBuf[1] == 'k'&&pBuf[2] == 'g'&&pBuf[3] == 'p'&&pBuf[4] == 's') {
+			donotdisplaypoint = 1;
+			char *GPSBuf_E=new char[50];
+			char *GPSBuf_N = new char[50];
+			char *BKID = new char[10];
+			char sqlstr[500];
+			int c = 0;
+			int x = 5;
+			while (pBuf[x] != '$')													//bkgps00001$3029.60430$11423.52267$
+				BKID[c++] = pBuf[x++];												//UPDATE bicycle SET location_n='3029.60430',
+																					//location_e='11423.52267'WHERE bicycle_id=00001;
+			BKID[c] = '\0';
+			x++;
+			c = 0;
+			while (pBuf[x] != '$')													
+				GPSBuf_N[c++] = pBuf[x++];
+			GPSBuf_N[c] = '\0';
+			x++;
+			c = 0;
+			while (pBuf[x] != '$')
+				GPSBuf_E[c++] = pBuf[x++];
+			GPSBuf_E[c] = '\0';
+			donotdisplaypoint = 1;
+			strcpy(sqlstr, "UPDATE bicycle SET location_n='");
+			strcat(sqlstr, GPSBuf_N);
+			strcat(sqlstr, "', location_e='");
+			strcat(sqlstr, GPSBuf_E);
+			strcat(sqlstr, "' WHERE bicycle_id=");
+			strcat(sqlstr, BKID);
+			strcat(sqlstr, ";");
+			process_statement(conn, sqlstr);
+			free(GPSBuf_E);
+			free(GPSBuf_N);
+			free(BKID);
+		}
+		/***************************************************
+		*******物联网车锁模块，手机用户查询附近车辆*********
+		********************未完成**************************
+		***************************************************/
+		if (pBuf[0] == 'b'&&pBuf[1] == 'k'&&pBuf[2] == 'c'&&pBuf[3] == 'x')
+		{
+			donotdisplaypoint = 1;
+			char sqlstr[500];
+			char *BKUSRLN = new char[12];
+			char *BKUSRLE = new char[12];
+			char *GPSBuf_N = new char[20];
+			char *GPSBuf_E = new char[20];
+			int BKNB;
+			char BKGPS[100];
+			donotdisplaypoint = 1;
+			int x = 4, c = 0;
+			while (pBuf[x] != '$')
+				BKUSRLN[c++] = pBuf[x++];
+			BKUSRLN[c] = '\0';
+			x++;
+			c = 0;
+			while (pBuf[x] != '$')
+				BKUSRLE[c++] = pBuf[x++];
+			BKUSRLE[c] = '\0';
+																		//SELECT location_n,location_e FROM bicycle 
+																		//WHERE location_n<(3029.61430+0.3) AND location_n>(3029.61430-0.3)
+																		//AND location_e<(11423.52267+0.3)AND location_e>(11423.52267-0.3);
+			strcpy(sqlstr, "SELECT location_n,location_e FROM bicycle WHERE location_n<(");
+			strcat(sqlstr, BKUSRLN);
+			strcat(sqlstr, "+0.3) AND location_n>(");
+			strcat(sqlstr, BKUSRLN);
+			strcat(sqlstr, "-0.3) AND location_e<(");
+			strcat(sqlstr, BKUSRLE);
+			strcat(sqlstr, "+0.3) AND location_e>(");
+			strcat(sqlstr, BKUSRLN);
+			strcat(sqlstr, "-0.3);");
+			process_statement(conn, sqlstr);
+
+			/////////////////////////////////////////////////
+			/*获取每辆车的GPS信息*/
+			/*数组存储每辆车的N和E，还要存储数量BKNB*/
+			////////////////////////////////////////////////
 			for (int i = 0; i < 20; i++) {
 				if (strcmp(IDBuf, idvector[i].id) == 0)
 				{
@@ -349,22 +434,31 @@ void CSocketAsynServerDlg::OnReceive()
 				CMySocket *p = (CMySocket*)m_connectList.GetNext(pos);
 				if (q == gpspoint) {									//传送GPS信息
 					int nSend;
-					nSend = p->Send(GPSBuf_E, 10);
-					Sleep(1000);
-					nSend = p->Send(GPSBuf_N, 10);
+					for (int i = 0; i < BKNB; i++) {
+						//////////////////////////////////
+						/*如何将每辆车的信息单独提取出来*/
+						//////////////////////////////////
+						nSend = p->Send(GPSBuf_N, 10);
+						Sleep(1000);
+						nSend = p->Send(GPSBuf_E, 10);
+					}
 				}
 				q++;
 			}
+			free(BKUSRLE);
+			free(BKUSRLN);
+			free(GPSBuf_E);
+			free(GPSBuf_N);
 		}
 		/***************************************************
 		*********物联网车锁模块，手机用户完成注册***********
 		***************************************************/
 		if (pBuf[0] == 'p'&&pBuf[1] == 'h'&&pBuf[2] == 'r'&&pBuf[3] == 'g')
 		{
+			donotdisplaypoint = 1;
 			int x = 4;
 			int c = 0;
 			char sqlstr[500];
-			char* temp;
 			char *BKUSRPH = new char[12];
 			char *BKUSREML = new char[30];
 			char *BKUSRCTY = new char[20];
@@ -412,9 +506,9 @@ void CSocketAsynServerDlg::OnReceive()
 		***************************************************/
 		if (pBuf[0] == 'b'&&pBuf[1] == 'k'&&pBuf[2] == 'o'&&pBuf[3] == 'p')
 		{
+			donotdisplaypoint = 1;
 			int x = 4;
 			int c = 0;
-			char* temp;
 			char sqlstr[500];
 			char *BKUSRPH = new char[12];
 			char *BKID = new char[6];
@@ -451,10 +545,10 @@ void CSocketAsynServerDlg::OnReceive()
 		***************************************************/
 		if (pBuf[0] == 'b'&&pBuf[1] == 'k'&&pBuf[2] == 'c'&&pBuf[3] == 'l')
 		{
+			donotdisplaypoint = 1;
 			int x = 4;
 			int c = 0;
 			char sqlstr[500];
-			char* temp;
 			char *BKUSRPH = new char[12];
 			char *BKID = new char[6];
 																		//提取请求的手机号和用车车牌号
@@ -483,60 +577,6 @@ void CSocketAsynServerDlg::OnReceive()
 			memset(sqlstr, 0, sizeof(sqlstr));							//必要清理工作,不然处处会奔溃
 			free(BKID);
 			free(BKUSRPH);
-		}
-		/***************************************************
-		***********服务器通用模块，离线用户连接*************
-		***************************************************/
-		if (pBuf[0] == 'q'&&pBuf[1] == 'u'&&pBuf[2] == 'i'&&pBuf[3] == 't'&&pBuf[4] == '$')
-		{
-			for (int i = 0; i < 20; i++) {
-				if (strcmp(IDBuf, idvector[i].id) == 0)
-				{
-					quitpoint = i;								//查找要退出连接的ID所在的地址块
-					break;
-				}
-			}
-			int q = 0;
-			for (pos = m_connectList.GetHeadPosition(); pos != NULL;)
-			{
-				CMySocket *p = (CMySocket*)m_connectList.GetNext(pos);
-				if (q == quitpoint) {
-				//	m_connectList.RemoveAt(pos);
-					p->Close();
-				}
-				q++;
-			}
-			for (int i = 0; i < 20; i++) {
-				if (strcmp(idvector[i].id, IDBuf) == 0) {
-					strcpy(idvector[i].id, "");			//删除ID表中的该ID，私聊就找不到这个人了
-					break;
-				}
-			}
-			int nSend;
-			char temp_lk_buf[32] = "用户";
-			strcat(temp_lk_buf, IDBuf);
-			strcat(temp_lk_buf, "已离开");
-			for (pos = m_connectList.GetHeadPosition(); pos != NULL;)
-			{
-				CMySocket *p = (CMySocket*)m_connectList.GetNext(pos);
-				nSend = p->Send(temp_lk_buf, 21);
-			}
-		}
-		/***************************************************
-		***********服务器通用模块，记录用户的连接***********
-		***************************************************/
-		if (pBuf[0] == 'I'&&pBuf[1] == 'D'&&pBuf[2] == '@')				//记录新用户登陆ID并广播该用户的登陆
-		{				
-			strcpy(idvector[id_point].id, IDBuf);
-			int nSend;
-			char temp_hy_buf[32] = "欢迎用户";
-			strcat(temp_hy_buf, IDBuf);
-			strcat(temp_hy_buf, "登陆！");
-			for (pos = m_connectList.GetHeadPosition(); pos != NULL;)
-			{
-				CMySocket *p = (CMySocket*)m_connectList.GetNext(pos);
-				nSend = p->Send(temp_hy_buf, 24);
-			}
 		}
 		/***************************************************
 		******聊天程序专用模块，查找私聊对象地址************
