@@ -1,0 +1,21 @@
+Microsoft Visual Studio Solution File, Format Version 8.00
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SocketAsynServer", "SocketAsynServer\SocketAsynServer.vcproj", "{642B801E-CB60-412A-92E4-62800A92CF98}"
+	ProjectSection(ProjectDependencies) = postProject
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfiguration) = preSolution
+		Debug = Debug
+		Release = Release
+	EndGlobalSection
+	GlobalSection(ProjectConfiguration) = postSolution
+		{642B801E-CB60-412A-92E4-62800A92CF98}.Debug.ActiveCfg = Debug|Win32
+		{642B801E-CB60-412A-92E4-62800A92CF98}.Debug.Build.0 = Debug|Win32
+		{642B801E-CB60-412A-92E4-62800A92CF98}.Release.ActiveCfg = Release|Win32
+		{642B801E-CB60-412A-92E4-62800A92CF98}.Release.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+	EndGlobalSection
+	GlobalSection(ExtensibilityAddIns) = postSolution
+	EndGlobalSection
+EndGlobal
