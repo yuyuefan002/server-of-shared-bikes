@@ -17,6 +17,7 @@ static void print_error(MYSQL *temp, char *message);			//汇报出错详情
 void process_statement(MYSQL *conn, char *stmt_str);			//一种通用的指令输入模式
 void process_result_set(MYSQL *conn, MYSQL_RES *res_set);		//结果集返回函数
 void print_dashes(MYSQL_RES *res_set);							//画出指定格式的函数
+void gps_process_result_set(MYSQL *conn, MYSQL_RES *res_set, char gpsbuf[500]);//返回GPS数据
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
@@ -272,10 +273,11 @@ void CSocketAsynServerDlg::OnReceive()
 		CMySocket *p=(CMySocket *)m_connectList.GetNext(pos);
 		
 		nReceived=p->Receive(pBuf,nBufLen);
-		
+		if (nReceived==0)												//如果某一客户端单方面关闭连接，当服务器连接到这一客户端时会收到一个空字符串，
+			nReceived = SOCKET_ERROR;									//错误以为这是另一个客户所发送的数据。
 		IPAddress=p->ClientIP;
 		PORTAddress=p->Port;
-	}while(pos!=NULL&&nReceived==SOCKET_ERROR);	
+	}while(pos!=NULL&&nReceived==SOCKET_ERROR);
 	local = pos;
 	if (nReceived!=SOCKET_ERROR)
 	{
@@ -311,7 +313,7 @@ void CSocketAsynServerDlg::OnReceive()
 			donotdisplaypoint = 1;
 		}
 		/***************************************************
-		***********服务器通用模块，离线用户连接*************
+		***********服务器通用模块，被动离线用户连接*********
 		***************************************************/
 		if (pBuf[0] == 'q'&&pBuf[1] == 'u'&&pBuf[2] == 'i'&&pBuf[3] == 't'&&pBuf[4] == '$')
 		{
@@ -340,6 +342,17 @@ void CSocketAsynServerDlg::OnReceive()
 				}
 			}
 		}
+		/***************************************************
+		***********服务器通用模块，主动离线用户连接*********
+		***************************************************/
+		for (pos = m_connectList.GetHeadPosition(); pos != NULL;)
+		{
+			CMySocket *p = (CMySocket*)m_connectList.GetNext(pos);
+			nReceived = p->Receive(pBuf, nBufLen);
+			if (nReceived == 0)												
+				p->Close();
+		}
+
 
 		/***************************************************
 		********物联网车锁模块，车辆定位上传、存储**********
@@ -381,20 +394,23 @@ void CSocketAsynServerDlg::OnReceive()
 		}
 		/***************************************************
 		*******物联网车锁模块，手机用户查询附近车辆*********
-		********************未完成**************************
 		***************************************************/
-		if (pBuf[0] == 'b'&&pBuf[1] == 'k'&&pBuf[2] == 'c'&&pBuf[3] == 'x')
+		//if (pBuf[0] == 'b'&&pBuf[1] == 'k'&&pBuf[2] == 'c'&&pBuf[3] == 'x')
+		if(strstr(pBuf,"bkcx")!=0)
 		{
 			donotdisplaypoint = 1;
 			char sqlstr[500];
 			char *BKUSRLN = new char[12];
 			char *BKUSRLE = new char[12];
-			char *GPSBuf_N = new char[20];
-			char *GPSBuf_E = new char[20];
+			char gpsbuf[500];
+			strcpy(gpsbuf, "\0");
 			int BKNB;
 			char BKGPS[100];
 			donotdisplaypoint = 1;
-			int x = 4, c = 0;
+			int x = 0, c = 0;
+			while (pBuf[x] != '$')
+				x++;
+			x++;
 			while (pBuf[x] != '$')
 				BKUSRLN[c++] = pBuf[x++];
 			BKUSRLN[c] = '\0';
@@ -415,12 +431,19 @@ void CSocketAsynServerDlg::OnReceive()
 			strcat(sqlstr, "+0.3) AND location_e>(");
 			strcat(sqlstr, BKUSRLN);
 			strcat(sqlstr, "-0.3);");
-			process_statement(conn, sqlstr);
+			MYSQL_RES *res_set;											//为了获取结果集
+			if (mysql_query(conn, sqlstr))								//发送指令，如果失败，报错问题，mysql_query是一个简单的调用函数，但是有较多的限制，比如传递的语句结尾是NULL
+			{
+				print_error(conn, "could not execute statement");
+				system("pause");
+			}
+			res_set = mysql_store_result(conn);							//获取结果集
+			if (res_set)												//有结果集返回时
+			{
+				gps_process_result_set(conn, res_set,gpsbuf);						//返回结果集
+				mysql_free_result(res_set);								//释放占用的内存资源，如果处理完结果集不调用这句话，内存泄漏会导致程序越来越慢。
+			}
 
-			/////////////////////////////////////////////////
-			/*获取每辆车的GPS信息*/
-			/*数组存储每辆车的N和E，还要存储数量BKNB*/
-			////////////////////////////////////////////////
 			for (int i = 0; i < 20; i++) {
 				if (strcmp(IDBuf, idvector[i].id) == 0)
 				{
@@ -434,21 +457,12 @@ void CSocketAsynServerDlg::OnReceive()
 				CMySocket *p = (CMySocket*)m_connectList.GetNext(pos);
 				if (q == gpspoint) {									//传送GPS信息
 					int nSend;
-					for (int i = 0; i < BKNB; i++) {
-						//////////////////////////////////
-						/*如何将每辆车的信息单独提取出来*/
-						//////////////////////////////////
-						nSend = p->Send(GPSBuf_N, 10);
-						Sleep(1000);
-						nSend = p->Send(GPSBuf_E, 10);
-					}
+						nSend = p->Send(gpsbuf, 500);
 				}
 				q++;
 			}
 			free(BKUSRLE);
 			free(BKUSRLN);
-			free(GPSBuf_E);
-			free(GPSBuf_N);
 		}
 		/***************************************************
 		*********物联网车锁模块，手机用户完成注册***********
@@ -500,10 +514,70 @@ void CSocketAsynServerDlg::OnReceive()
 			free(BKUSRCTY);
 			free(BKUSRCITY);
 		}
+		/*****************************************************
+		*****物联网车锁模块，确认车锁开启，开始骑行状态*******
+		******************************************************/
+		//手机发出开锁请求，服务器记录开锁人、开锁对象；当锁发出反馈信息时，记录开锁时间；当锁长时间无响应，删除该信息
+		if (pBuf[0] == 'b'&&pBuf[1] == 'k'&&pBuf[2] == 'c'&&pBuf[3] == 'f')
+		{
+			donotdisplaypoint = 1;
+			int x = 4;
+			int c = 0;
+			char sqlstr[500];
+			char *BKID = new char[10];
+			while (pBuf[x] != '$')
+				BKID[c++] = pBuf[x++];
+			BKID[c] = '\0';
+			strcpy(sqlstr, "UPDATE ride_event SET starttime=curtime() WHERE bicycle_id=");
+			strcat(sqlstr, BKID);
+			strcat(sqlstr, "&&starttime <=> NULL;");
+			process_statement(conn, sqlstr);
+			//更新自行车状态为O(open)
+			//UPDATE bicycle SET status = 'O' WHERE bicycle_id = XXXXX;
+			strcpy(sqlstr, "UPDATE bicycle SET status = 'O' WHERE bicycle_id =");
+			strcat(sqlstr, BKID);
+		 	strcat(sqlstr, ";\0");
+			process_statement(conn, sqlstr);
+			strcpy(sqlstr, "alop");
+			strcat(sqlstr, BKID);
+			strcat(sqlstr, "$");
+			for (pos = m_connectList.GetHeadPosition(); pos != NULL;)
+			{
+				CMySocket *p = (CMySocket*)m_connectList.GetNext(pos);
+					int nSend;
+						nSend = p->Send(sqlstr, 20);
 
-		/***************************************************
-		***物联网车锁模块，记录开始骑车事件，更新车锁状态***
-		***************************************************/
+				
+			}
+			memset(sqlstr, 0, sizeof(sqlstr));							//必要清理工作
+			free(BKID);
+		}
+		/*****************************************************
+		*****物联网车锁模块，确认车锁关闭，结束骑行状态*******
+		******************************************************/
+		if (pBuf[0] == 'b'&&pBuf[1] == 'k'&&pBuf[2] == 'c'&&pBuf[3] == 'c')
+		{
+			donotdisplaypoint = 1;
+			int x = 4;
+			int c = 0;
+			char sqlstr[500];
+			char *BKID = new char[6];
+			while (pBuf[x] != '$')										//提取单车车牌
+				BKID[c++] = pBuf[x++];
+			BKID[c] = '\0';
+
+			//更新自行车状态为C(close)
+			//UPDATE bicycle SET status = 'C' WHERE bicycle_id = XXXXX;
+			strcpy(sqlstr, "UPDATE bicycle SET status = 'C' WHERE bicycle_id =");
+			strcat(sqlstr, BKID);
+			strcat(sqlstr, ";\0");
+			process_statement(conn, sqlstr);
+			memset(sqlstr, 0, sizeof(sqlstr));							//必要清理工作,不然处处会奔溃
+			free(BKID);
+		}
+		/*****************************************************
+		*物联网车锁模块，数据库记录开始骑车事件，更新车锁状态*
+		******************************************************/
 		if (pBuf[0] == 'b'&&pBuf[1] == 'k'&&pBuf[2] == 'o'&&pBuf[3] == 'p')
 		{
 			donotdisplaypoint = 1;
@@ -527,22 +601,16 @@ void CSocketAsynServerDlg::OnReceive()
 			strcat(sqlstr, BKUSRPH);
 			strcat(sqlstr, ",");
 			strcat(sqlstr, BKID);
-			strcat(sqlstr,",now(), curtime(), NULL, NULL);\0");
+			strcat(sqlstr,",CURTIME(), NULL, NULL);");
 			process_statement(conn, sqlstr);
 			memset(sqlstr, 0, sizeof(sqlstr));
-																		//更新自行车状态为O(open)
-																		//UPDATE bicycle SET status = 'O' WHERE bicycle_id = XXXXX;
-			strcpy(sqlstr,"UPDATE bicycle SET status = 'O' WHERE bicycle_id =");
-			strcat(sqlstr, BKID);
-			strcat(sqlstr, ";\0");
-			process_statement(conn, sqlstr);	
-			memset(sqlstr, 0, sizeof(sqlstr));							//必要清理工作
+
 			free(BKID);
 			free(BKUSRPH);
 		}
-		/***************************************************
-		***物联网车锁模块，记录结束骑车事件，更新车锁状态***
-		***************************************************/
+		/*****************************************************
+		*物联网车锁模块，数据库记录结束骑车事件，更新车锁状态*
+		******************************************************/
 		if (pBuf[0] == 'b'&&pBuf[1] == 'k'&&pBuf[2] == 'c'&&pBuf[3] == 'l')
 		{
 			donotdisplaypoint = 1;
@@ -563,17 +631,14 @@ void CSocketAsynServerDlg::OnReceive()
 																		//生成一条骑行记录
 																		//UPDATE ride_event SET endday=now(),endtime=curtime() 
 																		//WHERE bicycle_id = XXXXX && endday <= >NULL&&endtime <= >NULL;
-			strcpy(sqlstr, "UPDATE ride_event SET endday=now(),endtime=curtime() WHERE bicycle_id = ");
+			strcpy(sqlstr, "UPDATE ride_event SET endtime=curtime() WHERE bicycle_id = ");
 			strcat(sqlstr, BKID);
-			strcat(sqlstr, "&& endday <=>NULL&&endtime <=>NULL;");
+			strcat(sqlstr, "&& endtime <=>NULL;");
 			process_statement(conn, sqlstr);
 			memset(sqlstr, 0, sizeof(sqlstr));
 																		//更新自行车状态为C(close)
 																		//UPDATE bicycle SET status = 'C' WHERE bicycle_id = XXXXX;
-			strcpy(sqlstr, "UPDATE bicycle SET status = 'C' WHERE bicycle_id =");
-			strcat(sqlstr, BKID);
-			strcat(sqlstr, ";\0");
-			process_statement(conn, sqlstr);
+
 			memset(sqlstr, 0, sizeof(sqlstr));							//必要清理工作,不然处处会奔溃
 			free(BKID);
 			free(BKUSRPH);
@@ -923,4 +988,28 @@ void CSocketAsynServerDlg::OnBnClickedButton2()
 	mysql_server_end();
 	GetDlgItem(IDC_BUTTON_QUIT)->EnableWindow(FALSE);
 
+}
+void gps_process_result_set(MYSQL *conn, MYSQL_RES *res_set,char gpsbuf[500])		//返回结果集函数
+{
+	MYSQL_ROW	row = NULL;									//MYSQL_ROW是指针类型，所以变量为row，而非*row	
+	MYSQL_FIELD *field = NULL;
+	unsigned long col_len;
+
+	if (mysql_errno(conn))										//错误报告
+		print_error(conn, "mysql_fetch_row() failed");
+	else
+		printf("Number of rows returned: %lu\n",
+		(unsigned long)mysql_num_rows(res_set));				//mysql_num_rows()可以返回检索到的行数，强制转UNSIGNED LONG保持其可移植性
+
+
+
+	while ((row = mysql_fetch_row(res_set)) != NULL)			//调用mysql_fetch_row()可以依次取回结果集中的每一行，有值返回MYSQL_ROW（指针，指向各列值）,没值返回NULL
+	{
+		mysql_field_seek(res_set, 0);
+		for (unsigned int i = 0; i< mysql_num_fields(res_set); i++)
+		{
+			strcat(gpsbuf, row[i]);
+			strcat(gpsbuf, "$");
+		}
+	}
 }
